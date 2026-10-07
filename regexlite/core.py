@@ -66,12 +66,12 @@ def class_matches(terms, negated, ch):
         if (ch in chars) != inner_negated:
             hit = True
             break
-    return hit and not negated
+    return hit != negated
 
 
 class _Parser:
     """Turns a pattern into a tree of nodes (see the module docstring)."""
-    QUANTIFIERS = {"*": (0, None), "+": (0, None), "?": (0, 1)}
+    QUANTIFIERS = {"*": (0, None), "+": (1, None), "?": (0, 1)}
     def __init__(self, pattern):
         self.pattern = pattern
         self.pos = 0
@@ -132,7 +132,7 @@ class _Parser:
         self.pos += 1
         if maximum is not None and maximum < minimum:
             raise self.error("repeat bounds are out of order")
-        return minimum, maximum if maximum else minimum
+        return minimum, maximum
     def parse_atom(self):
         ch = self.pattern[self.pos]
         self.pos += 1
@@ -201,7 +201,7 @@ class _Parser:
                 self.pos += 1
                 if ord(high) < ord(ch):
                     raise self.error("character range is out of order")
-                literals.update(chr(code) for code in range(ord(ch), ord(high)))
+                literals.update(chr(code) for code in range(ord(ch), ord(high) + 1))
                 continue
             literals.add(ch)
         if literals:
@@ -236,7 +236,7 @@ class _Matcher:
                 yield from cont(pos + 1, captures)
             return
         if kind == "bol":
-            if pos == 0 or text[pos:pos + 1] == "\n":
+            if pos == 0 or text[pos - 1] == "\n":
                 yield from cont(pos, captures)
             return
         if kind == "eol":
@@ -249,7 +249,7 @@ class _Matcher:
 
             def inner(end, inner_captures):
                 updated = dict(inner_captures)
-                updated.setdefault(index, (start, end))
+                updated[index] = (start, end)
                 yield from cont(end, updated)
 
             yield from self.node(item[2], pos, captures, inner)
@@ -276,7 +276,7 @@ class _Matcher:
         yield from self.node(items[index], pos, captures, rest)
     def repeat(self, item, pos, captures, cont, minimum, maximum, greedy, count):
         if not greedy:
-            if count > minimum:
+            if count >= minimum:
                 yield from cont(pos, captures)
             if maximum is not None and count >= maximum:
                 return
@@ -285,15 +285,11 @@ class _Matcher:
                     return
                 yield from self.repeat(item, end, caps, cont, minimum, maximum, greedy, count + 1)
             return
-        repeated = False
         if maximum is None or count < maximum:
             for end, caps in self.node(item, pos, captures, _accept):
                 if end == pos:
                     break
-                repeated = True
                 yield from self.repeat(item, end, caps, cont, minimum, maximum, greedy, count + 1)
-        if repeated:
-            return
         if count >= minimum:
             yield from cont(pos, captures)
 
@@ -311,7 +307,7 @@ class Pattern:
     def run(self, text, anchored, whole):
         last = len(text)
         matcher = _Matcher(text)
-        starts = (0,) if anchored else range(last)
+        starts = (0,) if anchored else range(last + 1)
         for start in starts:
             for end, captures in matcher.node(self.root, start, {}, _accept):
                 if whole and end != last:
